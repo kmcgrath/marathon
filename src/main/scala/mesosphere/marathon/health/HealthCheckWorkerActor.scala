@@ -8,7 +8,7 @@ import mesosphere.marathon.Protos.HealthCheckDefinition.Protocol.{
   TCP
 }
 
-import akka.actor.{ Actor, ActorLogging }
+import akka.actor.{ Actor, ActorLogging, PoisonPill }
 import akka.util.Timeout
 
 import spray.http._
@@ -31,9 +31,7 @@ class HealthCheckWorkerActor extends Actor with ActorLogging {
     case HealthCheckJob(task, check) =>
       val replyTo = sender() // avoids closing over the volatile sender ref
 
-      val replyWithHealth = doCheck(task, check)
-
-      replyWithHealth.onComplete {
+      doCheck(task, check).andThen {
         case Success(result) => replyTo ! result
         case Failure(t) =>
           replyTo ! Unhealthy(
@@ -41,9 +39,7 @@ class HealthCheckWorkerActor extends Actor with ActorLogging {
             task.getVersion,
             s"${t.getClass.getSimpleName}: ${t.getMessage}"
           )
-
-          context stop self
-      }
+      } andThen { case _ => self ! PoisonPill }
   }
 
   def doCheck(task: MarathonTask, check: HealthCheck): Future[HealthResult] =
